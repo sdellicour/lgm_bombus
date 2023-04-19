@@ -1,0 +1,20 @@
+ID1,ID2,name
+bio1,bio01,annual mean temperature
+bio2,bio02,mean diurnal range
+bio3,bio03,isothermality
+bio4,bio04,temperature seasonality
+bio5,bio05,max temperature of warmest month
+bio6,bio06,min temperature of coldest month
+bio7,bio07,temperature annual range
+bio8,bio08,mean temperature of wettest quarter
+bio9,bio09,mean temperature of driest quarter
+bio10,bio10,mean temperature of warmest quarter
+bio11,bio11,mean temperature of coldest quarter
+bio12,bio12,annual precipitation
+bio13,bio13,precipitation of wettest month
+bio14,bio14,precipitation of driest month
+bio15,bio15,precipitation seasonality
+bio16,bio16,precipitation of wettest quarter
+bio17,bio17,precipitation of driest quarter
+bio18,bio18,precipitation of warmest quarter
+bio19,bio19,precipitation of coldest quarter
