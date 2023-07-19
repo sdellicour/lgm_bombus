@@ -1,3 +1,7 @@
+# TO DO:
+	# - plotting and masking the ice sheet on the different maps and projections
+	# - re-doing the ecological niche modelling while taking the ice sheet into account?
+
 library(ade4)
 library(ape)
 library(blockCV)
@@ -18,6 +22,7 @@ library(rgdal)
 library(rgeos)
 library(seqinr)
 library(sp)
+library(terra)
 library(vioplot)
 
 # 1. Preparation of the shapefile and different climatic rasters
@@ -25,17 +30,20 @@ library(vioplot)
 # 3. Defining the background areas for each study area
 # 4. BRT analyses with standard or spatial cross-validation
 # 5. Estimation of spatial sorting bias (SSB; for spatial autocorrelation)
-# 6. Comparison of the response curves for each climatic variable
-# 7. Analyses of the relative influence of each climatic variable
-# 8. Plotting the different climatic variables and their past projections
-# 9. BRT projections based on past and present climatic variables
-# 10. Post hoc analyses to compare past and present climatic niches
+# 6. Computation of the prevalence-pseudoabsence-calibrated Sørensen index
+# 7. Comparison of the response curves for each climatic variable
+# 8. Analyses of the relative influence of each climatic variable
+# 9. Loading and preparing the different ice sheet layers
+# 10. Plotting the different climatic variables and their past projections
+# 11. BRT projections based on past and present climatic variables
+# 12. Post hoc analyses to compare past and present climatic niches
 
 directory = "Bombus_obs_160620"; savingPlots = FALSE
 timePeriods = c("Last GLM","Mid-Holocene","Present time")
 timePeriodIDs = c("Past_GLM","Past_Holo","Present_t0")
 species = read.csv("Bombus_species.csv", header=T)
-continents = shapefile("Continents_shapefile/Continents.shp")
+europe1 = shapefile("Continents_shapefile/Continent.shp")
+coastlines = shapefile("Continents_shapefile/Coastlines.shp")
 mask = raster("Mask_raster_file.nc4"); minYear = 1950; maxYear = 2000
 envVariableNames1 = read.csv("Bioclimatic_vars.csv", head=T)[,"name"]
 
@@ -43,7 +51,6 @@ envVariableNames1 = read.csv("Bioclimatic_vars.csv", head=T)[,"name"]
 
 	# 1.1. Preparation of the European shapefile that will be used as a mask
 
-europe1 = subset(continents, continents$CONTINENT=="Europe")
 europe1 = crop(europe1, extent(-12,29,35,72)); polygons = list(); c = 0
 for (i in 1:length(europe1@polygons[[1]]@Polygons))
 	{
@@ -91,8 +98,8 @@ if (savingPlots == TRUE)
 		for (i in 1:dim(species)[1])
 			{
 				plot(nullRaster, col="gray90", ann=F, legend=F, axes=F, box=F)
-				plot(europe3, add=T, border="gray50", lwd=1.5)
-				points(observations_list[[i]], col="gray30", pch=3, cex=0.3, lwd=0.3)
+				plot(coastlines, add=T, col="gray50", lwd=1.5)
+				points(observations_list[[i]], col="gray10", pch=3, cex=0.3, lwd=0.3)
 				mtext(paste0("B. ",species[i,1]), side=3, line=-2, at=0, cex=0.75, col="gray30")
 			}
 		dev.off()
@@ -359,7 +366,7 @@ if (newAnalyses == TRUE) { for (i in 1:dim(species)[1]) {
 			}
 		if (spatialCrossValidation2 == TRUE) saveRDS(brt_model_scv2, paste0("BRT_projection_files/BRT_models/B_",species[i,1],"_models_SCV2.rds"))
 		write.csv(AUCs, paste0("BRT_projection_files/BRT_models/B_",species[i,1],"_CCV_SCV_AUCs.csv"), row.names=F, quote=F)
-	}}}
+	}}
 if (!file.exists(paste0("Occurrence_data.csv")))
 	{
 		write.csv(occurrence_data_summary, "Occurrence_data.csv", quote=F)
@@ -443,7 +450,71 @@ if (newAnalyses == TRUE)
 		write.csv(round(SSBs,2), paste0("BRT_projection_files/BRT_models/SSB_estimates_for_the_SCV.csv"), quote=F)
 	}
 
-# 6. Comparison of the response curves for each climatic variable
+# 6. Computation of the prevalence-pseudoabsence-calibrated Sørensen index
+
+	# Sources:
+		# - computation performed according to the formulas of Leroi et al. (2018, J. Biogeography)
+		# - optimisation of the threshold with a 0.01 step increment according to Li & Guo (2013, Ecography)
+
+if (!file.exists(paste0("All_SIppc_values.csv")))
+	{
+		selectedModel = "SCV2"; tab = matrix(nrow=dim(species)[1], ncol=2)
+		colnames(tab) = c("ppac_sorensenIndex","optimisedThreshold"); row.names(tab) = species[,1]
+		background_cells = sum(!is.na(background[])); tabs_list1 = list()
+		for (i in 1:dim(species)[1])
+			{
+				brt_model_scv2 = readRDS(paste0("BRT_projection_files/BRT_models/B_",species[i,"species"],"_models_",selectedModel,".rds"))
+				sorensen_ppcs = rep(NA, length(brt_model_scv2)); thresholds = rep(NA, length(brt_model_scv2)); tabs_list2 = list()
+				for (j in 1:length(brt_model_scv2))
+					{
+						tmp = matrix(nrow=101, ncol=2); tmp[,1] = seq(0,1,0.01)
+						df = brt_model_scv2[[j]]$gbm.call$dataframe
+						responses = df$response; data = df[,4:dim(df)[2]]
+						n.trees = brt_model_scv2[[j]]$gbm.call$best.trees; type = "response"; single.tree = FALSE
+						prediction = predict.gbm(brt_model_scv2[[j]], data, n.trees, type, single.tree)		
+						N = background_cells
+						P = sum(responses==1); A = sum(responses==0)
+						prev = P/(P+A) # proportion of recorded sites where the species is present
+						x = (P/A)*((1-prev)/prev)
+						sorensen_ppc = 0
+						for (threshold in seq(0,1,0.01))
+							{
+								TP = length(which((responses==1)&(prediction>=threshold))) # true positives
+								FN = length(which((responses==1)&(prediction<threshold))) # false negatives
+								FP_pa = length(which((responses==0)&(prediction>=threshold))) # false positives
+								sorensen_ppc_tmp = (2*TP)/((2*TP)+(x*FP_pa)+(FN))
+								tmp[which(tmp[,1]==threshold),2] = sorensen_ppc_tmp
+								if (sorensen_ppc < sorensen_ppc_tmp)
+									{
+										sorensen_ppc = sorensen_ppc_tmp
+										optimised_threshold = threshold
+									}
+							}
+						tabs_list2[[j]] = tmp
+						sorensen_ppcs[j] = sorensen_ppc
+						thresholds[j] = optimised_threshold
+					}
+				tabs_list1[[i]] = tabs_list2
+				tab[i,1] = paste0(round(median(sorensen_ppcs),2)," [",round(min(sorensen_ppcs),2),"-",round(max(sorensen_ppcs),2),"]")
+				tab[i,2] = paste0(round(median(thresholds),2)," [",round(min(thresholds),2),"-",round(max(thresholds),2),"]")
+			}
+		write.csv(tab, "All_SIppc_values.csv", quote=F)		
+		pdf(paste0("All_the_figures_&_SI/SI_ppc_species_curves_NEW.pdf"), width=10, height=12)
+		par(mfrow=c(8,6), oma=c(0,0,0,0), mar=c(2.5,2.5,0.5,0.5), lwd=0.4, col="gray30")
+		for (i in 1:dim(species)[1])
+			{
+				plot(tabs_list1[[i]][[1]], col=NA, ann=F, axes=F, xlim=c(0,1), ylim=c(0,1))
+				for (j in 1:length(tabs_list1[[i]])) lines(tabs_list1[[i]][[j]], lwd=0.3, col="gray80", lty=1)
+				axis(side=1, lwd.tick=0.2, cex.axis=0.7, lwd=0, tck=-0.030, col.axis="gray30", mgp=c(0,0.07,0))
+				axis(side=2, lwd.tick=0.2, cex.axis=0.7, lwd=0, tck=-0.030, col.axis="gray30", mgp=c(0,0.30,0))
+				if (i %in% c(1,7,13,19,25,31,37,43)) title(ylab=expression("SI"["ppc"]), cex.lab=0.9, mgp=c(1.3,0,0), col.lab="gray30")
+				if (i %in% c(41,42,43,44,45,46)) title(xlab="threshold", cex.lab=0.9, mgp=c(1.1,0,0), col.lab="gray30")
+				box(lwd=0.2, col="gray30"); mtext(paste0("B. ",species[i,1]), side=3, line=-8, at=0.02, cex=0.55, col="gray30", adj=0)
+			}
+		dev.off()
+	}
+
+# 7. Comparison of the response curves for each climatic variable
 
 newAnalyses = FALSE
 if (newAnalyses == TRUE)
@@ -517,7 +588,7 @@ if (newAnalyses == TRUE)
 		dev.off()
 	}
 
-# 7. Analyses of the relative influence of each climatic variable
+# 8. Analyses of the relative influence of each climatic variable
 
 selectedModel = "SCV2"
 if (!file.exists("BRT_RI_estimates.csv"))
@@ -549,9 +620,31 @@ for (i in 1:dim(relativeInfluences)[1])
 		meanRelativeInfluences = meanRelativeInfluences + relativeInfluences[i,]; c = c+1
 	}
 meanRelativeInfluences = meanRelativeInfluences/c; row.names(meanRelativeInfluences) = NULL
-# print(t(round(meanRelativeInfluences,1)))
+	# print(t(round(meanRelativeInfluences,1)))
 
-# 8. Plotting the different climatic variables and their past projections
+# 9. Loading and preparing the different ice sheet layers
+
+r = raster("Ice_reconstructions/Ice_reconstruction_files/Eurasia/thickness/0.nc")
+crs(r) = "+proj=laea +lat_0=90 +lon_0=0 +x_0=973693 +y_0=4580866 +datum=WGS84 +units=m +no_defs"
+is_t0 = crop(projectRaster(r, crs=CRS("+init=epsg:4326")), extent(-12,29,35,72))
+buffer = is_t0; buffer[is.na(buffer[])] = NA; buffer[buffer[]>0] = 1
+is_t0_0m = rasterToPolygons(buffer, fun=function(x){x==1}, dissolve=T)
+r = raster("Ice_reconstructions/Ice_reconstruction_files/Eurasia/thickness/5000.nc")
+crs(r) = "+proj=laea +lat_0=90 +lon_0=0 +x_0=973693 +y_0=4580866 +datum=WGS84 +units=m +no_defs"
+is_Holo = crop(projectRaster(r, crs=CRS("+init=epsg:4326")), extent(-12,29,35,72))
+buffer = is_Holo; buffer[is.na(buffer[])] = NA; buffer[buffer[]>0] = 1
+is_Holo_0m = rasterToPolygons(buffer, fun=function(x){x==1}, dissolve=T)
+r = raster("Ice_reconstructions/Ice_reconstruction_files/Eurasia/thickness/22500.nc")
+crs(r) = "+proj=laea +lat_0=90 +lon_0=0 +x_0=973693 +y_0=4580866 +datum=WGS84 +units=m +no_defs"
+is_LGM = crop(projectRaster(r, crs=CRS("+init=epsg:4326")), extent(-12,29,35,72))
+buffer = is_LGM; buffer[is.na(buffer[])] = NA; buffer[buffer[]>0] = 1
+is_LGM_0m = rasterToPolygons(buffer, fun=function(x){x==1}, dissolve=T)
+buffer = is_LGM; buffer[is.na(buffer[])] = NA; buffer[buffer[]<=1000] = NA; buffer[buffer[]>1000] = 1
+is_LGM_1000m = rasterToPolygons(buffer, fun=function(x){x==1}, dissolve=T)
+buffer = is_LGM; buffer[is.na(buffer[])] = NA; buffer[buffer[]<=2000] = NA; buffer[buffer[]>2000] = 1
+is_LGM_2000m = rasterToPolygons(buffer, fun=function(x){x==1}, dissolve=T)
+
+# 10. Plotting the different climatic variables and their past projections
 
 envVariables_t0 = list()
 for (i in 1:length(envVariableNames1))
@@ -563,12 +656,12 @@ for (i in 1:length(envVariableNames1))
 envVariables_list = list(); envVariables_list[[1]] = envVariables_t0
 periods = c("t0","mid-Holocene","LGM"); directories = c("Present_t0","Past_Holo","Past_LGM")
 period_names = c("Present times","Mid-Holocene","LGM"); model_names = c()
-for (i in 1: length(models)) model_names[i] = unlist(strsplit(models[i],"_"))[1]
+models = list.files(paste0("WorldClim_1_rasters/",directories[2]))
+models = models[which(!grepl(".pdf",models))]
+for (i in 1:length(models)) model_names[i] = unlist(strsplit(models[i],"_"))[1]
 for (i in 2:length(periods))
 	{
 		buffer_list1 = list()
-		models = list.files(paste0("WorldClim_1_rasters/",directories[i]))
-		models = models[which(!grepl(".pdf",models))]
 		for (j in 1:length(models))
 			{
 				files = list.files(paste0("WorldClim_1_rasters/",directories[i],"/",models[j]))
@@ -591,6 +684,7 @@ if (savingPlots)
 		for (i in 1:length(envVariables_list[[1]])) # variables
 			{
 				if (i <= 11) colour_scale = colorRampPalette(brewer.pal(9,"YlOrRd"))(150)[1:101] # temperature
+				if (i <= 11) colour_scale = rev(colorRampPalette(brewer.pal(9,"RdBu"))(121))[c(1:51,71:121)] # temperature
 				if (i >= 12) colour_scale = colorRampPalette(brewer.pal(9,"YlGnBu"))(101) # precipitation
 				minV = Inf; maxV = -Inf
 				for (j in 1:length(envVariables_list[[2]])) # models
@@ -603,11 +697,18 @@ if (savingPlots)
 									}	else	{
 										rast = envVariables_list[[k]][[i]]
 									}
+								if (i <= 11) rast[] = rast[]/10
 								if (minV > min(rast[],na.rm=T)) minV = min(rast[],na.rm=T)
 								if (maxV < max(rast[],na.rm=T)) maxV = max(rast[],na.rm=T)
 							}
 					}
-				pdf(paste0("All_the_figures_&_SI/Maps_variable_",envVariableNames2[i],".pdf"), width=7.5, height=10.5)
+				true_minV = minV; true_maxV = maxV
+				if (i%in%c(1,5,6,8:11))
+					{
+						if (abs(minV) < abs(maxV)) minV = -maxV
+						if (abs(maxV) < abs(minV)) maxV = -minV
+					}
+				pdf(paste0("All_the_figures_&_SI/All_bioclimatic_variables/Maps_variable_",envVariableNames2[i],".pdf"), width=7.5, height=10.5)
 				par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30")
 				for (j in 1:length(envVariables_list[[2]])) # models
 					{
@@ -618,27 +719,51 @@ if (savingPlots)
 										if ((j == 2)&(k == 1))
 											{
 												rast = envVariables_list[[1]][[1]]; rast[] = NA
+												if (i <= 11) rast[] = rast[]/10
 												plot(rast, col=NA, ann=F, legend=F, axes=F, box=F)
-												rastLegend = raster(t(as.matrix(c(minV,maxV))))
-												plot(rastLegend, col=colour_scale, legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
-													 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.6, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
-													 mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
+												rastLegend = raster(t(as.matrix(c(true_minV,true_maxV))))												
+												index1 = round(((true_minV-minV)/(maxV-minV))*100)+1
+												index2 = round(((true_maxV-minV)/(maxV-minV))*100)+1
+												plot(rastLegend, col=colour_scale[index1:index2], legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, 
+													 smallplot=c(0.00,0.02,0.037,0.963), adj=3, axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", 
+													 tck=-0.8, col="gray30", col.axis="gray30", line=0, mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 											 }	else	{
 											 	plot.new()
 											 }
-									}	else		{
+									}	else	{
 										if (k != 1)
 											{
 												rast = envVariables_list[[k]][[j]][[i]]
 											}	else	{
 												rast = envVariables_list[[k]][[i]]
 											}
+										if (i <= 11) rast[] = rast[]/10
+										buffer = rast; buffer[!is.na(buffer[])] = 1; buffer[is.na(buffer[])] = 0
+										contour = rasterToContour(buffer, maxpixels=100000)
 										index1 = round(((min(rast[],na.rm=T)-minV)/(maxV-minV))*100)+1
 										index2 = round(((max(rast[],na.rm=T)-minV)/(maxV-minV))*100)+1
 										plot(rast, col=colour_scale[index1:index2], ann=F, legend=F, axes=F, box=F)
+										plot(contour, col="gray50", lwd=0.1, add=T)
+										if (k == 3)
+											{
+												plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+												plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#F7FBFF"
+												plot(is_LGM_1000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#DEEBF7"
+												plot(is_LGM_2000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#C6DBEF"
+											}
+										if (k == 2)
+											{
+												plot(is_Holo_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+												plot(is_Holo_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,55,maxColorValue=255)) # "#F7FBFF"
+											}
+										if (k == 1)
+											{
+												plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+												plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,55,maxColorValue=255)) # "#F7FBFF"
+											}
 										rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
-										mtext(period_names[k], at=-10, line=-3, adj=0, cex=0.65, col="gray30")
-										mtext(paste0("(",model_names[j],")"), at=-10, line=-4, adj=0, cex=0.6, col="gray30")
+										mtext(period_names[k], at=-10, line=-2.8, adj=0, cex=0.65, col="gray30")
+										if (k != 1) mtext(paste0("(",model_names[j],")"), at=-10, line=-3.8, adj=0, cex=0.6, col="gray30")
 										rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="gray30")
 									}
 							}
@@ -647,7 +772,7 @@ if (savingPlots)
 			}
 	}
 
-# 9. BRT projections based on past and present climatic variables
+# 11. BRT projections based on past and present climatic variables
 
 if (!file.exists("BRT_projection_files/All_projs.rds"))
 	{
@@ -693,12 +818,15 @@ if (!file.exists("BRT_projection_files/All_projs.rds"))
 	}
 if (savingPlots)
 	{
-		minV = 0; maxV = 1
+		minV = 0; maxV = 1 # not used anymore
+		SIppcs = read.csv("All_SIppc_values.csv", head=T)
 		for (i in 1:length(projections1)) # species
 			{
-				colour_scale = c(rep("#E5E5E5",10),rev(colorRampPalette(brewer.pal(11,"RdYlBu"))(120))[21:110])
-				pdf(paste0("All_the_figures_&_SI/All_BRT_projection_maps/",species[i,"species"],".pdf"), width=7.5, height=10.5)
-				par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30")
+				txt = SIppcs[i,"optimisedThreshold"]; cutOff = as.numeric(unlist(strsplit(txt," \\["))[1])
+				colour_scale = c(rep("#E5E5E5",10),rev(colorRampPalette(brewer.pal(11,"RdYlBu"))(120))[21:110]) # not used anymore
+				minV = cutOff; maxV = 1; colour_scale = c("#F2F2F2",colorRampPalette(brewer.pal(11,"BrBG"))(150)[c(20:70,81:130)])
+				pdf(paste0("All_the_figures_&_SI/All_BRT_projection_maps/B_",species[i,"species"],".pdf"), width=7.5, height=10.5)
+				par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30", col.axis="gray30", col.tick="gray30")
 				for (j in 1:length(projections1[[i]][[2]])) # models
 					{
 						for (k in length(projections1[[i]]):1) # periods
@@ -710,20 +838,40 @@ if (savingPlots)
 												rast = projections1[[i]][[1]][[1]]; rast[] = NA
 												plot(rast, col=NA, ann=F, legend=F, axes=F, box=F)
 												rastLegend = raster(t(as.matrix(c(minV,maxV))))
-												plot(rastLegend, col=colour_scale, legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
-													 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.6, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
+												plot(rastLegend, col=colour_scale[2:length(colour_scale)], legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963),
+													 adj=3, axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
 													 mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 											 }	else	{
 											 	plot.new()
 											 }
-									}	else		{
-										rast = projections1[[i]][[j]][[k]]
+									}	else	{
+										rast = projections1[[i]][[j]][[k]]; rast[rast[]<cutOff] = cutOff
+										buffer = rast; buffer[!is.na(buffer[])] = 1; buffer[is.na(buffer[])] = 0
+										contour = rasterToContour(buffer, maxpixels=100000)
 										index1 = round(((min(rast[],na.rm=T)-minV)/(maxV-minV))*100)+1
 										index2 = round(((max(rast[],na.rm=T)-minV)/(maxV-minV))*100)+1
 										plot(rast, col=colour_scale[index1:index2], ann=F, legend=F, axes=F, box=F)
+										plot(contour, col="gray50", lwd=0.1, add=T)
+										if (k == 3)
+											{
+												plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+												plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col="#F7FBFF") # rgb(77,77,77,40,maxColorValue=255))
+												plot(is_LGM_1000m, add=T, border="gray50", lwd=0.1, col="#DEEBF7") # rgb(77,77,77,40,maxColorValue=255))
+												plot(is_LGM_2000m, add=T, border="gray50", lwd=0.1, col="#C6DBEF") # rgb(77,77,77,40,maxColorValue=255))
+											}
+										if (k == 2)
+											{
+												plot(is_Holo_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+												plot(is_Holo_0m, add=T, border="gray50", lwd=0.1, col="#F7FBFF") # rgb(77,77,77,55,maxColorValue=255))
+											}
+										if (k == 1)
+											{
+												plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+												plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col="#F7FBFF") # rgb(77,77,77,55,maxColorValue=255))
+											}
 										rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
-										mtext(period_names[k], at=-10, line=-3, adj=0, cex=0.65, col="gray30")
-										mtext(paste0("(",model_names[j],")"), at=-10, line=-4, adj=0, cex=0.6, col="gray30")
+										mtext(period_names[k], at=-10, line=-2.8, adj=0, cex=0.65, col="gray30")
+										if (k != 1) mtext(paste0("(",model_names[j],")"), at=-10, line=-3.8, adj=0, cex=0.6, col="gray30")
 										rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="gray30")
 									}
 							}
@@ -732,9 +880,10 @@ if (savingPlots)
 			}
 	}
 
-# 10. Post hoc analyses to compare past and present climatic niches
+# 12. Post hoc analyses to compare past and present climatic niches
 
-cutOff = 0.10
+cutOff = 0.10 # not used anymore
+SIppcs = read.csv("All_SIppc_values.csv", head=T)
 rasters_CSI_list = list() # CSI = climatic suitability index
 rasters_SRI_list = list() # SRI = species richness index
 for (j in 1:length(models))
@@ -744,6 +893,8 @@ for (j in 1:length(models))
 		for (i in 1:dim(species)[1])
 			{
 				bufferRasters[[i]] = projections1[[i]][[1]][[1]]
+				txt = SIppcs[i,"optimisedThreshold"]
+				cutOff = as.numeric(unlist(strsplit(txt," \\["))[1])
 				c1 = projections1[[i]][[1]][[1]]; c1[c1[]>cutOff] = 1
 				counterRasters[[i]] = c1
 			}
@@ -752,6 +903,8 @@ for (j in 1:length(models))
 		for (i in 1:dim(species)[1])
 			{
 				bufferRasters[[i]] = projections1[[i]][[j]][[3]]
+				txt = SIppcs[i,"optimisedThreshold"]
+				cutOff = as.numeric(unlist(strsplit(txt," \\["))[1])
 				c1 = projections1[[i]][[j]][[3]]; c1[c1[]>cutOff] = 1
 				counterRasters[[i]] = c1
 			}
@@ -760,8 +913,8 @@ for (j in 1:length(models))
 	}
 if (savingPlots)
 	{
-		colour_scale_1 = rev(colorRampPalette(brewer.pal(11,"RdYlBu"))(120))[11:110]
-		colour_scale_2 = rev(colorRampPalette(brewer.pal(11,"RdYlBu"))(120))[11:110]
+		colour_scale_1 = rev(colorRampPalette(brewer.pal(11,"RdBu"))(120))[10:110]
+		colour_scale_2 = rev(colorRampPalette(brewer.pal(11,"RdBu"))(120))[10:110]
 		minV1 = Inf; maxV1 = -Inf; minV2 = Inf; maxV2 = -Inf
 		for (i in 1:length(rasters_CSI_list))
 			{
@@ -780,15 +933,30 @@ if (savingPlots)
 					}
 			}
 		pdf(paste0("All_the_figures_&_SI/CSI_maps_LGM_&_t0_NEW.pdf"), width=7.5, height=10.5)
-		par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30")
+		par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30", col.axis="gray30", col.tick="gray30")
 		for (j in length(rasters_CSI_list[[i]]):1)
 			{
 				for (i in 1:length(rasters_CSI_list))
 					{
 						rast = rasters_CSI_list[[i]][[j]]
+						buffer = rast; buffer[!is.na(buffer[])] = 1; buffer[is.na(buffer[])] = 0
+						contour = rasterToContour(buffer, maxpixels=100000)
 						index1 = round(((min(rast[],na.rm=T)-minV1)/(maxV1-minV1))*100)+1
 						index2 = round(((max(rast[],na.rm=T)-minV1)/(maxV1-minV1))*100)+1
 						plot(rast, col=colour_scale_1[index1:index2], ann=F, legend=F, axes=F, box=F)
+						plot(contour, col="gray50", lwd=0.1, add=T)
+						if (j == 2)
+							{
+								plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+								plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#F7FBFF"
+								plot(is_LGM_1000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#DEEBF7"
+								plot(is_LGM_2000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#C6DBEF"
+							}
+						if (j == 1)
+							{
+								plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+								plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,55,maxColorValue=255)) # "#F7FBFF"
+							}
 						rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
 						mtext("Climatic suitability index", at=-10, line=-2.8, adj=0, cex=0.55, col="gray30")
 						mtext(paste0("(",model_names[i],")"), at=-10, line=-3.8, adj=0, cex=0.55, col="gray30")
@@ -799,7 +967,7 @@ if (savingPlots)
 		plot(rast, col=NA, ann=F, legend=F, axes=F, box=F)
 		rastLegend = raster(t(as.matrix(c(minV1,maxV1))))
 		plot(rastLegend, col=colour_scale_1, legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
-			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.6, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
+			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
 			 mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 		dev.off()
 		pdf(paste0("All_the_figures_&_SI/SRI_maps_LGM_&_t0_NEW.pdf"), width=7.5, height=10.5)
@@ -809,9 +977,24 @@ if (savingPlots)
 				for (i in 1:length(rasters_SRI_list))
 					{
 						rast = rasters_SRI_list[[i]][[j]]
+						buffer = rast; buffer[!is.na(buffer[])] = 1; buffer[is.na(buffer[])] = 0
+						contour = rasterToContour(buffer, maxpixels=100000)
 						index1 = round(((min(rast[],na.rm=T)-minV2)/(maxV2-minV2))*100)+1
 						index2 = round(((max(rast[],na.rm=T)-minV2)/(maxV2-minV2))*100)+1
 						plot(rast, col=colour_scale_2[index1:index2], ann=F, legend=F, axes=F, box=F)
+						plot(contour, col="gray50", lwd=0.1, add=T)
+						if (j == 2)
+							{
+								plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+								plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#F7FBFF"
+								plot(is_LGM_1000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#DEEBF7"
+								plot(is_LGM_2000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#C6DBEF"
+							}
+						if (j == 1)
+							{
+								plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+								plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,55,maxColorValue=255)) # "#F7FBFF"
+							}
 						rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
 						mtext("Species richness index", at=-10, line=-2.8, adj=0, cex=0.55, col="gray30")
 						mtext(paste0("(",model_names[i],")"), at=-10, line=-3.8, adj=0, cex=0.55, col="gray30")
@@ -822,7 +1005,7 @@ if (savingPlots)
 		plot(rast, col=NA, ann=F, legend=F, axes=F, box=F)
 		rastLegend = raster(t(as.matrix(c(minV2,maxV2))))
 		plot(rastLegend, col=colour_scale_2, legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
-			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.6, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
+			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
 			 mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 		dev.off()
 	}
@@ -830,11 +1013,8 @@ if (savingPlots)
 	{
 		pdf(paste0("All_the_figures_&_SI/CSI_SRI_differences_NEW.pdf"), width=7.5, height=10.5)
 		par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30")
-		colour_scale_1 = colorRampPalette(brewer.pal(11,"BrBG"))(120)[11:110]
-		colour_scale_2 = colorRampPalette(brewer.pal(11,"PuOr"))(120)[11:110]
-		colour_scale_1 = colorRampPalette(brewer.pal(11,"RdYlGn"))(120)[11:110]
-		colour_scale_1 = rev(colorRampPalette(brewer.pal(11,"RdYlBu"))(120))[11:110]
-		colour_scale_2 = rev(colorRampPalette(brewer.pal(11,"RdYlBu"))(120))[11:110]
+		colour_scale_1 = rev(colorRampPalette(brewer.pal(11,"RdBu"))(120))[10:110]
+		colour_scale_2 = rev(colorRampPalette(brewer.pal(11,"RdBu"))(120))[10:110]
 		minV1 = Inf; maxV1 = -Inf; minV2 = Inf; maxV2 = -Inf
 		for (i in 1:length(rasters_CSI_list))
 			{
@@ -846,6 +1026,8 @@ if (savingPlots)
 				if (minV2 > min(rasters_SRI_list[[i]][[1]][]-rasters_SRI_list[[i]][[2]][],na.rm=T)) minV2 = min(rasters_SRI_list[[i]][[1]][]-rasters_SRI_list[[i]][[2]][],na.rm=T)
 				if (maxV2 < max(rasters_SRI_list[[i]][[1]][]-rasters_SRI_list[[i]][[2]][],na.rm=T)) maxV2 = max(rasters_SRI_list[[i]][[1]][]-rasters_SRI_list[[i]][[2]][],na.rm=T)
 			}
+		true_minV1 = minV1; true_maxV1 = maxV1
+		true_minV2 = minV2; true_maxV2 = maxV2
 		if (abs(minV1) < abs(maxV1)) minV1 = -maxV1
 		if (abs(maxV1) < abs(minV1)) maxV1 = -minV1
 		if (abs(minV2) < abs(maxV2)) minV2 = -maxV2
@@ -853,35 +1035,63 @@ if (savingPlots)
 		for (i in 1:length(rasters_CSI_list))
 			{
 				rast = rasters_CSI_list[[i]][[1]]-rasters_CSI_list[[i]][[2]]
+				buffer = rast; buffer[!is.na(buffer[])] = 1; buffer[is.na(buffer[])] = 0
+				contour = rasterToContour(buffer, maxpixels=100000)
 				index1 = round(((min(rast[],na.rm=T)-minV1)/(maxV1-minV1))*100)+1
 				index2 = round(((max(rast[],na.rm=T)-minV1)/(maxV1-minV1))*100)+1
 				plot(rast, col=colour_scale_1[index1:index2], ann=F, legend=F, axes=F, box=F)
+				plot(contour, col="gray50", lwd=0.1, add=T)
+				if (k == 3)
+					{
+						plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+						plot(is_LGM_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#F7FBFF"
+						plot(is_LGM_1000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#DEEBF7"
+						plot(is_LGM_2000m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,40,maxColorValue=255)) # "#C6DBEF"
+					}
+				if (k == 2)
+					{
+						plot(is_Holo_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+						plot(is_Holo_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,55,maxColorValue=255)) # "#F7FBFF"
+					}
+				if (k == 1)
+					{
+						plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
+						plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(77,77,77,55,maxColorValue=255)) # "#F7FBFF"
+					}
 				rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
-				mtext("Climatic suitability index", at=-10, line=-3, adj=0, cex=0.65, col="gray30")
-				mtext(paste0("(",model_names[i],")"), at=-10, line=-4, adj=0, cex=0.55, col="gray30")
+				mtext("Climatic suitability index", at=-10, line=-2.8, adj=0, cex=0.55, col="gray30")
+				mtext(paste0("(",model_names[i],")"), at=-10, line=-3.8, adj=0, cex=0.55, col="gray30")
 				rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="gray30")
 			}
 		for (i in 1:length(rasters_SRI_list))
 			{
 				rast = rasters_SRI_list[[i]][[1]]-rasters_SRI_list[[i]][[2]]
+				buffer = rast; buffer[!is.na(buffer[])] = 1; buffer[is.na(buffer[])] = 0
+				contour = rasterToContour(buffer, maxpixels=100000)
 				index1 = round(((min(rast[],na.rm=T)-minV2)/(maxV2-minV2))*100)+1
 				index2 = round(((max(rast[],na.rm=T)-minV2)/(maxV2-minV2))*100)+1
 				plot(rast, col=colour_scale_2[index1:index2], ann=F, legend=F, axes=F, box=F)
+				plot(contour, col="gray50", lwd=0.1, add=T)
+				plot(is_t0_0m, add=T, border="gray50", lwd=0.1, col=rgb(255,255,255,255,maxColorValue=255))
 				rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
-				mtext("Species richness index", at=-10, line=-3, adj=0, cex=0.65, col="gray30")
-				mtext(paste0("(",model_names[i],")"), at=-10, line=-4, adj=0, cex=0.55, col="gray30")
+				mtext("Species richness index", at=-10, line=-2.8, adj=0, cex=0.55, col="gray30")
+				mtext(paste0("(",model_names[i],")"), at=-10, line=-3.8, adj=0, cex=0.55, col="gray30")
 				rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="gray30")
 			}		
 		rast = projections1[[i]][[1]][[1]]; rast[] = NA
 		plot(rast, col=NA, ann=F, legend=F, axes=F, box=F)
-		rastLegend = raster(t(as.matrix(c(minV1,maxV1))))
-		plot(rastLegend, col=colour_scale_1, legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
-			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.6, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
+		rastLegend = raster(t(as.matrix(c(true_minV1,true_maxV1))))												
+		index1 = round(((true_minV1-minV1)/(maxV1-minV1))*100)+1
+		index2 = round(((true_maxV1-minV1)/(maxV1-minV1))*100)+1
+		plot(rastLegend, col=colour_scale_1[index1:index2], legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
+			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
 			 mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 		plot(rast, col=NA, ann=F, legend=F, axes=F, box=F)
-		rastLegend = raster(t(as.matrix(c(minV2,maxV2))))
-		plot(rastLegend, col=colour_scale_2, legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
-			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.6, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
+		rastLegend = raster(t(as.matrix(c(true_minV2,true_maxV2))))												
+		index1 = round(((true_minV2-minV2)/(maxV2-minV2))*100)+1
+		index2 = round(((true_maxV2-minV2)/(maxV2-minV2))*100)+1
+		plot(rastLegend, col=colour_scale_2[index1:index2], legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963), adj=3,
+			 axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
 			 mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 		dev.off()
 	}
