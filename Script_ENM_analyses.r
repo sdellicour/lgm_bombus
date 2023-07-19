@@ -709,7 +709,7 @@ if (savingPlots)
 						if (abs(maxV) < abs(minV)) maxV = -minV
 					}
 				pdf(paste0("All_the_figures_&_SI/All_bioclimatic_variables/Maps_variable_",envVariableNames2[i],".pdf"), width=7.5, height=10.5)
-				par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30")
+				par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30", col="gray30", col.axis="gray30")
 				for (j in 1:length(envVariables_list[[2]])) # models
 					{
 						for (k in length(envVariables_list):1) # periods
@@ -725,7 +725,7 @@ if (savingPlots)
 												index1 = round(((true_minV-minV)/(maxV-minV))*100)+1
 												index2 = round(((true_maxV-minV)/(maxV-minV))*100)+1
 												plot(rastLegend, col=colour_scale[index1:index2], legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, 
-													 smallplot=c(0.00,0.02,0.037,0.963), adj=3, axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", 
+													 smallplot=c(0.00,0.02,0.037,0.963), adj=3, axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="black", 
 													 tck=-0.8, col="gray30", col.axis="gray30", line=0, mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 											 }	else	{
 											 	plot.new()
@@ -764,7 +764,7 @@ if (savingPlots)
 										rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
 										mtext(period_names[k], at=-10, line=-2.8, adj=0, cex=0.65, col="gray30")
 										if (k != 1) mtext(paste0("(",model_names[j],")"), at=-10, line=-3.8, adj=0, cex=0.6, col="gray30")
-										rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="gray30")
+										rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="black")
 									}
 							}
 					}
@@ -826,7 +826,7 @@ if (savingPlots)
 				colour_scale = c(rep("#E5E5E5",10),rev(colorRampPalette(brewer.pal(11,"RdYlBu"))(120))[21:110]) # not used anymore
 				minV = cutOff; maxV = 1; colour_scale = c("#F2F2F2",colorRampPalette(brewer.pal(11,"BrBG"))(150)[c(20:70,81:130)])
 				pdf(paste0("All_the_figures_&_SI/All_BRT_projection_maps/B_",species[i,"species"],".pdf"), width=7.5, height=10.5)
-				par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30", col.axis="gray30", col.tick="gray30")
+				par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30", col.axis="gray30")
 				for (j in 1:length(projections1[[i]][[2]])) # models
 					{
 						for (k in length(projections1[[i]]):1) # periods
@@ -839,7 +839,7 @@ if (savingPlots)
 												plot(rast, col=NA, ann=F, legend=F, axes=F, box=F)
 												rastLegend = raster(t(as.matrix(c(minV,maxV))))
 												plot(rastLegend, col=colour_scale[2:length(colour_scale)], legend.only=T, add=T, legend.width=0.5, legend.shrink=0.3, smallplot=c(0.00,0.02,0.037,0.963),
-													 adj=3, axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="gray30", tck=-0.8, col="gray30", col.axis="gray30", line=0,
+													 adj=3, axis.args=list(cex.axis=1.0, lwd=0, lwd.tick=0.2, col.tick="black", tck=-0.8, col="gray30", col.axis="gray30", line=0,
 													 mgp=c(0,0.6,0)), alpha=1, side=3, horizontal=F)
 											 }	else	{
 											 	plot.new()
@@ -872,7 +872,7 @@ if (savingPlots)
 										rect(-12, 67, 5, 71.5, lwd=0.2, col="white", border=NA)
 										mtext(period_names[k], at=-10, line=-2.8, adj=0, cex=0.65, col="gray30")
 										if (k != 1) mtext(paste0("(",model_names[j],")"), at=-10, line=-3.8, adj=0, cex=0.6, col="gray30")
-										rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="gray30")
+										rect(-13, 35, 29, 72, lwd=0.2, col=NA, border="black")
 									}
 							}
 					}
@@ -933,7 +933,7 @@ if (savingPlots)
 					}
 			}
 		pdf(paste0("All_the_figures_&_SI/CSI_maps_LGM_&_t0_NEW.pdf"), width=7.5, height=10.5)
-		par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30", col.axis="gray30", col.tick="gray30")
+		par(mfrow=c(3,3), oma=c(1.0,2.0,1.0,0.0), mar=c(0.0,0.0,0.0,0.2), lwd=0.2, col="gray30", col.axis="gray30")
 		for (j in length(rasters_CSI_list[[i]]):1)
 			{
 				for (i in 1:length(rasters_CSI_list))
